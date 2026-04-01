@@ -24,12 +24,23 @@ export async function POST() {
           .eq('nome', 'FINEP')
           .single()
 
+        // Parse prazo DD/MM/YYYY to YYYY-MM-DD
+        let prazoDate: string | null = null
+        if (edital.prazoEnvio) {
+          const parts = edital.prazoEnvio.split('/')
+          if (parts.length === 3) {
+            prazoDate = `${parts[2]}-${parts[1]}-${parts[0]}`
+          }
+        }
+
         const { error } = await supabase.from('editais').insert({
           fonte_id: fonte?.id,
           titulo: edital.titulo,
           url_original: edital.url,
           orgao: 'FINEP',
           publico_alvo: edital.publico ? [edital.publico] : [],
+          areas_tematicas: edital.tema ? edital.tema.split(';').map((t: string) => t.trim()).filter(Boolean) : [],
+          prazo_submissao: prazoDate,
           status: 'ativo',
           dados_brutos: edital
         })
