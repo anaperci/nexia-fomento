@@ -1,4 +1,4 @@
-name: Coletar DOU
+name: Coletar CNPq + EMBRAPII
 
 on:
   schedule:
@@ -24,7 +24,7 @@ jobs:
       - name: Install Chromium
         run: npx playwright install chromium --with-deps
 
-      - name: Run DOU collector
+      - name: Run multi-source collector
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

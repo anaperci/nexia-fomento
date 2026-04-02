@@ -1,3 +1,8 @@
+/**
+ * Coletor multi-fonte via Playwright (GitHub Actions)
+ * Fontes: CNPq (memoria2), EMBRAPII
+ * A FINEP ja e coletada via scraper proprio no Next.js
+ */
 import { chromium } from 'playwright';
 import { createClient } from '@supabase/supabase-js';
 
@@ -5,159 +10,199 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!SUPABASE_URL || !SUPABASE_KEY) {
-  console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
+  console.error('Missing env vars');
   process.exit(1);
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, { db: { schema: 'nexia' } });
 
-const SEARCH_TERMS = [
-  'edital fomento inovacao',
-  'chamada publica inovacao tecnologia',
-  'subvencao economica inovacao',
-  'edital FINEP',
-  'edital BNDES inovacao',
-  'edital CNPq inovacao',
-  'chamada publica pesquisa desenvolvimento',
-];
+// === CNPq ===
+async function coletarCNPq(page) {
+  console.log('\n=== CNPq ===');
+  const editais = [];
 
-async function searchDOU(page, term) {
-  console.log(`Buscando: "${term}"`);
+  try {
+    await page.goto('http://memoria2.cnpq.br/web/guest/chamadas-publicas', {
+      waitUntil: 'domcontentloaded', timeout: 30000,
+    });
+    await page.waitForTimeout(5000);
 
-  await page.goto('https://www.in.gov.br/consulta/-/buscar/dou', {
-    waitUntil: 'domcontentloaded',
-    timeout: 30000,
+    // Click on "Abertas" tab if exists
+    const abertasTab = await page.$('a:has-text("Abertas"), a:has-text("abertas")');
+    if (abertasTab) {
+      await abertasTab.click();
+      await page.waitForTimeout(3000);
+    }
+
+    // Try getting results from the portlet
+    const items = await page.evaluate(() => {
+      const results = [];
+      // Try multiple selectors
+      const links = document.querySelectorAll(
+        '.results-row a, .taglib-search-iterator a, table a[href*="chamada"], table a[href*="edital"], .asset-abstract a'
+      );
+      for (const a of links) {
+        const text = a.textContent?.trim();
+        const href = a.getAttribute('href');
+        if (text && text.length > 20 && href) {
+          results.push({ titulo: text.substring(0, 200), url: href });
+        }
+      }
+      return results;
+    });
+
+    console.log(`  ${items.length} chamadas encontradas na pagina`);
+
+    // If portlet didn't load, try getting links from the full page
+    if (items.length === 0) {
+      const allLinks = await page.evaluate(() => {
+        return Array.from(document.querySelectorAll('a[href]'))
+          .filter(a => {
+            const h = (a.getAttribute('href') || '').toLowerCase();
+            const t = (a.textContent || '').toLowerCase();
+            return (h.includes('chamada') || t.includes('chamada')) && t.length > 20;
+          })
+          .map(a => ({
+            titulo: a.textContent?.trim().substring(0, 200) || '',
+            url: a.getAttribute('href') || '',
+          }));
+      });
+      console.log(`  ${allLinks.length} links alternativos encontrados`);
+      editais.push(...allLinks);
+    } else {
+      editais.push(...items);
+    }
+  } catch (e) {
+    console.error('  Erro CNPq:', e.message);
+  }
+
+  // Filter: only keep chamadas with empresa/inovacao context, skip bolsas
+  return editais.filter(e => {
+    const t = e.titulo.toLowerCase();
+    if (/bolsa|mestrado|doutorado|pesquisador|professor/i.test(t)) return false;
+    return true;
   });
-  await page.waitForTimeout(2000);
-
-  await page.fill('#search-bar', term);
-  await page.evaluate(() => {
-    const radio = document.querySelector('input[name="data-exata"][value="mes"]');
-    if (radio) radio.checked = true;
-  });
-
-  await Promise.all([
-    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }),
-    page.evaluate(() => doSearch('advancedSearch')),
-  ]);
-  await page.waitForTimeout(2000);
-
-  const paramsText = await page.evaluate(() => {
-    const el = document.getElementById(
-      '_br_com_seatecnologia_in_buscadou_BuscaDouPortlet_params'
-    );
-    return el?.textContent || '{}';
-  });
-
-  const data = JSON.parse(paramsText.trim());
-  return data.jsonArray || [];
 }
 
-function isRelevant(hit) {
-  const title = (hit.title || '').toLowerCase();
-  const content = (hit.content || '').toLowerCase();
-  const combined = title + ' ' + content;
+// === EMBRAPII ===
+async function coletarEMBRAPII(page) {
+  console.log('\n=== EMBRAPII ===');
+  const editais = [];
 
-  // Must mention edital/chamada AND innovation/tech related terms
-  const hasEdital = /edital|chamada p[uú]blica|sele[cç][aã]o|concurso/.test(combined);
-  const hasInnovation = /inova[cç][aã]o|tecnolog|pesquisa|desenvolvimento|fomento|subven[cç][aã]o|ci[eê]ncia|startup|ict|finep|cnpq|bndes|fapesp|embrapii/.test(combined);
+  try {
+    await page.goto('https://embrapii.org.br/transparencia/', {
+      waitUntil: 'networkidle', timeout: 30000,
+    });
+    await page.waitForTimeout(5000);
 
-  // Filter out irrelevant types
-  const irrelevant = /extrato de contrato|ata de registro|resultado de julgamento|aviso de revoga|suspens[aã]o|errata|retifica[cç][aã]o/.test(title);
+    // Get chamada links with title text (not "Ver documentos")
+    const items = await page.evaluate(() => {
+      const seen = new Set();
+      return Array.from(document.querySelectorAll('a[href*="chamada"]'))
+        .filter(a => {
+          const text = a.textContent?.trim() || '';
+          const href = a.getAttribute('href') || '';
+          // Only named links (not "Ver documentos"), 2025/2026
+          return text.length > 20 && text !== 'Ver documentos'
+            && /(2025|2026)/.test(href + text)
+            && !/resultado|encerrad/i.test(text);
+        })
+        .map(a => {
+          const href = a.getAttribute('href') || '';
+          const url = href.startsWith('http') ? href : `https://embrapii.org.br${href}`;
+          return { titulo: a.textContent?.trim().substring(0, 200) || '', url };
+        })
+        .filter(e => {
+          if (seen.has(e.url)) return false;
+          seen.add(e.url);
+          return true;
+        });
+    });
 
-  return hasEdital && hasInnovation && !irrelevant;
+    console.log(`  ${items.length} chamadas recentes encontradas`);
+    editais.push(...items);
+  } catch (e) {
+    console.error('  Erro EMBRAPII:', e.message);
+  }
+
+  return editais;
 }
 
+// === Main ===
 async function main() {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
-    userAgent:
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     viewport: { width: 1280, height: 800 },
   });
   const page = await context.newPage();
 
-  const allHits = new Map(); // dedupe by urlTitle
   let novos = 0;
   let erros = 0;
 
-  for (const term of SEARCH_TERMS) {
-    try {
-      const hits = await searchDOU(page, term);
-      console.log(`  ${hits.length} resultados`);
+  // Collect from all sources
+  const [cnpqEditais, embrapiiEditais] = await Promise.all([
+    coletarCNPq(page),
+    coletarEMBRAPII(await context.newPage()),
+  ]);
 
-      for (const hit of hits) {
-        if (!allHits.has(hit.urlTitle) && isRelevant(hit)) {
-          allHits.set(hit.urlTitle, hit);
-        }
-      }
-    } catch (e) {
-      console.error(`  Erro: ${e.message}`);
-    }
-  }
+  const allEditais = [
+    ...cnpqEditais.map(e => ({ ...e, orgao: 'CNPq', fonte: 'CNPq' })),
+    ...embrapiiEditais.map(e => ({ ...e, orgao: 'EMBRAPII', fonte: 'EMBRAPII' })),
+  ];
+
+  console.log(`\nTotal coletado: ${allEditais.length} (CNPq: ${cnpqEditais.length}, EMBRAPII: ${embrapiiEditais.length})`);
 
   await browser.close();
 
-  console.log(`\nTotal relevantes (dedup): ${allHits.size}`);
+  // Save to Supabase
+  for (const edital of allEditais) {
+    if (!edital.url || !edital.titulo) continue;
 
-  // Get DOU fonte
-  const { data: fonte } = await supabase
-    .from('fontes')
-    .select('id')
-    .eq('nome', 'DOU')
-    .single();
-
-  for (const [urlTitle, hit] of allHits) {
-    const url = `https://www.in.gov.br/web/dou/-/${urlTitle}`;
-
-    // Check if already exists
     const { data: existente } = await supabase
       .from('editais')
       .select('id')
-      .eq('url_original', url)
+      .eq('url_original', edital.url)
       .single();
 
     if (!existente) {
-      // Clean content from HTML tags
-      const descricao = (hit.content || '')
-        .replace(/<[^>]+>/g, '')
-        .replace(/&[^;]+;/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .substring(0, 2000);
-
-      const orgao = hit.hierarchyList?.[0] || 'DOU';
+      // Get fonte_id
+      const { data: fonte } = await supabase
+        .from('fontes')
+        .select('id')
+        .eq('nome', edital.fonte)
+        .single();
 
       const { error } = await supabase.from('editais').insert({
         fonte_id: fonte?.id,
-        titulo: hit.title,
-        url_original: url,
-        orgao,
-        descricao,
+        titulo: edital.titulo,
+        url_original: edital.url,
+        orgao: edital.orgao,
         status: 'ativo',
-        dados_brutos: hit,
       });
 
       if (!error) {
         novos++;
-        console.log(`+ ${hit.title}`);
+        console.log(`+ [${edital.orgao}] ${edital.titulo}`);
       } else {
         erros++;
-        console.error(`  Erro inserindo: ${error.message}`);
+        console.error(`  Erro: ${error.message}`);
       }
     }
   }
 
-  // Update fonte
-  await supabase
-    .from('fontes')
-    .update({
-      ultima_coleta: new Date().toISOString(),
-      total_coletados: allHits.size,
-    })
-    .eq('nome', 'DOU');
+  // Update fontes timestamps
+  for (const nome of ['CNPq', 'EMBRAPII']) {
+    const count = allEditais.filter(e => e.fonte === nome).length;
+    if (count > 0) {
+      await supabase
+        .from('fontes')
+        .update({ ultima_coleta: new Date().toISOString(), total_coletados: count })
+        .eq('nome', nome);
+    }
+  }
 
-  console.log(`\nResultado: ${allHits.size} relevantes, ${novos} novos, ${erros} erros`);
+  console.log(`\nResultado: ${allEditais.length} coletados, ${novos} novos, ${erros} erros`);
 }
 
 main().catch((e) => {
