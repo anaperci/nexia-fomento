@@ -99,3 +99,40 @@ export async function analisarEdital(texto: string): Promise<AnaliseCompleta> {
 
   return JSON.parse(clean) as AnaliseCompleta
 }
+
+export async function analisarEditalPDFNativo(
+  buffer: Buffer,
+  paginas: number
+): Promise<AnaliseCompleta> {
+  const base64 = buffer.toString('base64')
+
+  const response = await client.messages.create({
+    model: 'claude-opus-4-6',
+    max_tokens: 2048,
+    system: SYSTEM_PROMPT,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'document',
+            source: {
+              type: 'base64',
+              media_type: 'application/pdf',
+              data: base64,
+            },
+          },
+          {
+            type: 'text',
+            text: USER_TEMPLATE('[Conteudo do PDF anexado acima - analise o documento completo]'),
+          },
+        ],
+      },
+    ],
+  })
+
+  const raw = response.content[0].type === 'text' ? response.content[0].text : ''
+  const clean = raw.trim().replace(/^```json\n?/, '').replace(/\n?```$/, '').trim()
+
+  return JSON.parse(clean) as AnaliseCompleta
+}

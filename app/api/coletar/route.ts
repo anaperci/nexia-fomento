@@ -1,7 +1,9 @@
 import { createClient } from '@/lib/supabase/server'
-import { coletarFinep } from '@/lib/scrapers/finep'
+import { coletarFinepCompleto } from '@/lib/scrapers/finep'
 import { coletarFapesp } from '@/lib/scrapers/fapesp'
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
+
+export const maxDuration = 300
 
 function parsePrazoBR(prazo: string): string | null {
   if (!prazo) return null
@@ -10,108 +12,200 @@ function parsePrazoBR(prazo: string): string | null {
   return null
 }
 
-type EditalGenerico = {
-  titulo: string
-  url: string
-  publico?: string
-  tema?: string
-  prazoEnvio?: string
-  fonte: string
-  resumo?: string
-} & Record<string, unknown>
+export async function POST(request: NextRequest) {
+  const supabase = createClient()
+  const { searchParams } = new URL(request.url)
+  const modo = searchParams.get('modo') || 'completo' // 'completo' | 'rapido'
 
-async function inserirEditais(
-  supabase: ReturnType<typeof createClient>,
-  editais: EditalGenerico[],
-  nomeFonte: string
-) {
-  let novos = 0, erros = 0
+  const resultados = {
+    coletados: 0,
+    novos: 0,
+    atualizados: 0,
+    analisados: 0,
+    erros: 0,
+    detalhes: [] as Array<{ titulo: string; status: string; metodo?: string }>,
+  }
 
-  const { data: fonte } = await supabase
-    .from('fontes')
-    .select('id')
-    .eq('nome', nomeFonte)
-    .single()
+  try {
+    // === FINEP (coleta completa com PDF + analise) ===
+    if (modo === 'completo') {
+      const editais = await coletarFinepCompleto()
+      resultados.coletados += editais.length
 
-  for (const edital of editais) {
-    const { data: existente } = await supabase
-      .from('editais')
-      .select('id')
-      .eq('url_original', edital.url)
-      .single()
+      const { data: fonte } = await supabase
+        .from('fontes')
+        .select('id')
+        .eq('nome', 'FINEP')
+        .single()
 
-    if (!existente) {
-      const prazoDate = parsePrazoBR(edital.prazoEnvio || '')
-      let status = 'ativo'
-      if (prazoDate) {
-        const diasRestantes = Math.ceil((new Date(prazoDate).getTime() - Date.now()) / 86400000)
-        if (diasRestantes <= 15) status = 'vencendo'
-        if (diasRestantes <= 0) status = 'encerrado'
+      for (const edital of editais) {
+        const { data: existente } = await supabase
+          .from('editais')
+          .select('id, analisado_em')
+          .eq('url_original', edital.url_pagina)
+          .single()
+
+        let prazoDate: string | null = null
+        if (edital.prazoEnvio) prazoDate = parsePrazoBR(edital.prazoEnvio)
+        // If analysis extracted a prazo, prefer that
+        if (edital.analise?.prazo_submissao) prazoDate = edital.analise.prazo_submissao
+
+        const payload = {
+          fonte_id: fonte?.id,
+          titulo: edital.analise?.titulo || edital.titulo,
+          url_original: edital.url_pagina,
+          orgao: edital.orgao,
+          publico_alvo: edital.analise?.publico_alvo || (edital.publico ? [edital.publico] : []),
+          areas_tematicas: edital.analise?.areas_tematicas || (edital.tema ? edital.tema.split(';').map(t => t.trim()).filter(Boolean) : []),
+          prazo_submissao: prazoDate,
+          status: 'ativo' as const,
+          texto_completo: edital.texto_completo,
+          dados_brutos: { pdf_url: edital.pdf_url, metodo_extracao: edital.metodo_extracao },
+          atualizado_em: new Date().toISOString(),
+          ...(edital.analise ? {
+            modalidade: edital.analise.modalidade,
+            valor_minimo: edital.analise.valor_minimo,
+            valor_maximo: edital.analise.valor_maximo,
+            regiao: edital.analise.regiao,
+            porte_empresa: edital.analise.porte_empresa,
+            resumo_ia: edital.analise.resumo_executivo,
+            proximos_passos: edital.analise.proximos_passos,
+            score_aderencia: Math.max(edital.analise.nexia.score, edital.analise.nct.score),
+            score_nexia: edital.analise.nexia.score,
+            score_nct: edital.analise.nct.score,
+            analise_nexia: edital.analise.nexia,
+            analise_nct: edital.analise.nct,
+            analisado_em: new Date().toISOString(),
+          } : {}),
+        }
+
+        if (existente) {
+          if (!existente.analisado_em && edital.analise) {
+            await supabase.from('editais').update(payload).eq('id', existente.id)
+            resultados.atualizados++
+            if (edital.analise) resultados.analisados++
+          }
+          resultados.detalhes.push({ titulo: edital.titulo, status: 'existente' })
+        } else {
+          const { error } = await supabase.from('editais').insert(payload)
+          if (!error) {
+            resultados.novos++
+            if (edital.analise) resultados.analisados++
+            resultados.detalhes.push({ titulo: edital.titulo, status: 'novo', metodo: edital.metodo_extracao })
+          } else {
+            resultados.erros++
+          }
+        }
       }
 
-      const { error } = await supabase.from('editais').insert({
-        fonte_id: fonte?.id,
-        titulo: edital.titulo,
-        url_original: edital.url,
-        orgao: nomeFonte,
-        publico_alvo: edital.publico ? [edital.publico] : [],
-        areas_tematicas: edital.tema ? edital.tema.split(';').map((t: string) => t.trim()).filter(Boolean) : [],
-        prazo_submissao: prazoDate,
-        descricao: edital.resumo || null,
-        status,
-        dados_brutos: edital,
-      })
+      await supabase
+        .from('fontes')
+        .update({ ultima_coleta: new Date().toISOString(), total_coletados: editais.length })
+        .eq('nome', 'FINEP')
+    } else {
+      // === Modo rapido (sem PDF, sem analise — como antes) ===
+      const { coletarFinep } = await import('@/lib/scrapers/finep')
+      const editaisFinep = await coletarFinep()
+      resultados.coletados += editaisFinep.length
 
-      if (!error) novos++
-      else erros++
+      const { data: fonte } = await supabase
+        .from('fontes')
+        .select('id')
+        .eq('nome', 'FINEP')
+        .single()
+
+      for (const edital of editaisFinep) {
+        const { data: existente } = await supabase
+          .from('editais')
+          .select('id')
+          .eq('url_original', edital.url)
+          .single()
+
+        if (!existente) {
+          const prazoDate = parsePrazoBR(edital.prazoEnvio || '')
+          const { error } = await supabase.from('editais').insert({
+            fonte_id: fonte?.id,
+            titulo: edital.titulo,
+            url_original: edital.url,
+            orgao: 'FINEP',
+            publico_alvo: edital.publico ? [edital.publico] : [],
+            areas_tematicas: edital.tema ? edital.tema.split(';').map(t => t.trim()).filter(Boolean) : [],
+            prazo_submissao: prazoDate,
+            status: 'ativo',
+            dados_brutos: edital,
+          })
+          if (!error) resultados.novos++
+          else resultados.erros++
+          resultados.detalhes.push({ titulo: edital.titulo, status: 'novo' })
+        }
+      }
+
+      await supabase
+        .from('fontes')
+        .update({ ultima_coleta: new Date().toISOString(), total_coletados: editaisFinep.length })
+        .eq('nome', 'FINEP')
     }
+
+    // === FAPESP (always simple mode) ===
+    const editaisFapesp = await coletarFapesp().catch(() => [])
+    resultados.coletados += editaisFapesp.length
+
+    const hoje = new Date()
+    hoje.setDate(hoje.getDate() + 3)
+
+    const { data: fonteFapesp } = await supabase
+      .from('fontes')
+      .select('id')
+      .eq('nome', 'FAPESP')
+      .single()
+
+    for (const edital of editaisFapesp) {
+      if (edital.prazoEnvio) {
+        const parsed = parsePrazoBR(edital.prazoEnvio)
+        if (parsed && new Date(parsed) < hoje) continue
+      }
+
+      const { data: existente } = await supabase
+        .from('editais')
+        .select('id')
+        .eq('url_original', edital.url)
+        .single()
+
+      if (!existente) {
+        const prazoDate = parsePrazoBR(edital.prazoEnvio || '')
+        let status = 'ativo'
+        if (prazoDate) {
+          const dias = Math.ceil((new Date(prazoDate).getTime() - Date.now()) / 86400000)
+          if (dias <= 15) status = 'vencendo'
+        }
+
+        const { error } = await supabase.from('editais').insert({
+          fonte_id: fonteFapesp?.id,
+          titulo: edital.titulo,
+          url_original: edital.url,
+          orgao: 'FAPESP',
+          publico_alvo: edital.publico ? [edital.publico] : [],
+          prazo_submissao: prazoDate,
+          descricao: edital.resumo || null,
+          status,
+          dados_brutos: edital,
+        })
+
+        if (!error) resultados.novos++
+        else resultados.erros++
+      }
+    }
+
+    await supabase
+      .from('fontes')
+      .update({ ultima_coleta: new Date().toISOString(), total_coletados: editaisFapesp.length })
+      .eq('nome', 'FAPESP')
+
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('Erro na coleta:', msg)
+    return NextResponse.json({ error: msg, ...resultados }, { status: 500 })
   }
-
-  await supabase
-    .from('fontes')
-    .update({ ultima_coleta: new Date().toISOString(), total_coletados: editais.length })
-    .eq('nome', nomeFonte)
-
-  return { novos, erros }
-}
-
-export async function POST() {
-  const supabase = createClient()
-  const resultados = { coletados: 0, novos: 0, erros: 0, fontes: {} as Record<string, { coletados: number; novos: number }> }
-
-  // Coletar em paralelo
-  const [editaisFinepRaw, editaisFapespRaw] = await Promise.all([
-    coletarFinep().catch(() => []),
-    coletarFapesp().catch(() => []),
-  ])
-
-  // Filtrar apenas editais com prazo futuro (pelo menos 3 dias)
-  const hoje = new Date()
-  hoje.setDate(hoje.getDate() + 3)
-
-  function prazoValido(prazo: string | undefined): boolean {
-    if (!prazo) return true // sem prazo = manter
-    const parsed = parsePrazoBR(prazo)
-    if (!parsed) return true
-    return new Date(parsed) >= hoje
-  }
-
-  const editaisFinep = editaisFinepRaw.filter(e => prazoValido(e.prazoEnvio))
-  const editaisFapesp = editaisFapespRaw.filter(e => prazoValido(e.prazoEnvio))
-
-  // FINEP
-  resultados.coletados += editaisFinep.length
-  const finepResult = await inserirEditais(supabase, editaisFinep as unknown as EditalGenerico[], 'FINEP')
-  resultados.novos += finepResult.novos
-  resultados.erros += finepResult.erros
-  resultados.fontes['FINEP'] = { coletados: editaisFinep.length, novos: finepResult.novos }
-
-  // FAPESP
-  resultados.coletados += editaisFapesp.length
-  const fapespResult = await inserirEditais(supabase, editaisFapesp as unknown as EditalGenerico[], 'FAPESP')
-  resultados.novos += fapespResult.novos
-  resultados.erros += fapespResult.erros
-  resultados.fontes['FAPESP'] = { coletados: editaisFapesp.length, novos: fapespResult.novos }
 
   return NextResponse.json(resultados)
 }
