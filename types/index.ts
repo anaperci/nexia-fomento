@@ -22,6 +22,12 @@ export interface Edital {
   score_aderencia?: number
   resumo_ia?: string
   proximos_passos?: string[]
+  analise_nexia?: AnaliseEmpresa
+  analise_nct?: AnaliseEmpresa
+  score_nexia?: number
+  score_nct?: number
+  analisado_em?: string
+  texto_completo?: string
   coletado_em: string
   atualizado_em: string
   fontes?: Fonte
@@ -58,6 +64,38 @@ export interface Alerta {
   areas?: string[]
   modalidades?: string[]
   valor_minimo?: number
+}
+
+export interface AnaliseEmpresa {
+  score: number
+  nivel: 'alto' | 'medio' | 'baixo' | 'irrelevante'
+  justificativa: string
+  pontos_fortes: string[]
+  pontos_atencao: string[]
+  recomendacao: 'candidatar' | 'avaliar' | 'ignorar'
+}
+
+export interface AnaliseCompleta {
+  titulo: string
+  orgao: string
+  modalidade: Modalidade
+  publico_alvo: string[]
+  areas_tematicas: string[]
+  valor_minimo: number | null
+  valor_maximo: number | null
+  prazo_submissao: string | null
+  regiao: string[]
+  porte_empresa: string[]
+  contrapartida: boolean
+  contrapartida_percentual: number | null
+  resumo_executivo: string
+  prazo_formatado: string
+  valor_formatado: string
+  nexia: AnaliseEmpresa
+  nct: AnaliseEmpresa
+  proximos_passos: string[]
+  documentos_exigidos: string[]
+  edital_id?: string
 }
 
 export interface ExtracaoIA {

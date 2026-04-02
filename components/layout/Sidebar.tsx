@@ -3,12 +3,13 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { motion } from 'framer-motion'
 import {
-  LayoutDashboard, FileText, Radio, Bell, Settings, Zap
+  LayoutDashboard, FileText, Radio, Bell, Settings, Zap, Sparkles
 } from 'lucide-react'
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/editais',   label: 'Editais',   icon: FileText },
+  { href: '/analisar',  label: 'Analisar',  icon: Sparkles },
   { href: '/fontes',    label: 'Fontes',    icon: Radio },
   { href: '/alertas',   label: 'Alertas',   icon: Bell },
 ]
