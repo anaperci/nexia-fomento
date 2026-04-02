@@ -18,10 +18,15 @@ const TERMOS_RELEVANTES = [
 ]
 
 const TERMOS_DESCARTAVEIS = [
+  // Bolsas e pesquisa individual
+  'bolsa', 'bolsista', 'bolsa de pesquisa', 'bolsa de estudo',
+  'pós-doutorado', 'pos-doutorado', 'doutorado', 'mestrado',
+  'graduação', 'graduacao', 'pesquisador', 'professor',
+  'treinamento técnico', 'treinamento tecnico',
+  'iniciação científica', 'iniciacao cientifica',
+  // Processos seletivos
   'concurso público', 'concurso publico', 'seleção de pessoal', 'selecao de pessoal',
   'processo seletivo', 'vaga', 'contratação', 'contratacao', 'servidor',
-  'bolsista', 'bolsa de pesquisa', 'pós-doutorado', 'pos-doutorado',
-  'doutorado', 'mestrado', 'graduação', 'graduacao', 'pesquisador', 'professor',
   'instituição de ciência e tecnologia', 'instituicao de ciencia e tecnologia',
   'fundação de apoio', 'fundacao de apoio', 'universidade', 'instituto federal', 'ict',
   'agropecuária', 'agropecuaria', 'agricultura', 'pecuária', 'pecuaria',

@@ -1,6 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
 import { coletarFinepCompleto } from '@/lib/scrapers/finep'
-import { coletarFapesp } from '@/lib/scrapers/fapesp'
 import { NextRequest, NextResponse } from 'next/server'
 
 export const maxDuration = 300
@@ -152,61 +151,6 @@ export async function POST(request: NextRequest) {
         .update({ ultima_coleta: new Date().toISOString(), total_coletados: editaisFinep.length })
         .eq('nome', 'FINEP')
     }
-
-    // === FAPESP (always simple mode) ===
-    const editaisFapesp = await coletarFapesp().catch(() => [])
-    resultados.coletados += editaisFapesp.length
-
-    const hoje = new Date()
-    hoje.setDate(hoje.getDate() + 3)
-
-    const { data: fonteFapesp } = await supabase
-      .from('fontes')
-      .select('id')
-      .eq('nome', 'FAPESP')
-      .single()
-
-    for (const edital of editaisFapesp) {
-      if (edital.prazoEnvio) {
-        const parsed = parsePrazoBR(edital.prazoEnvio)
-        if (parsed && new Date(parsed) < hoje) continue
-      }
-
-      const { data: existente } = await supabase
-        .from('editais')
-        .select('id')
-        .eq('url_original', edital.url)
-        .single()
-
-      if (!existente) {
-        const prazoDate = parsePrazoBR(edital.prazoEnvio || '')
-        let status = 'ativo'
-        if (prazoDate) {
-          const dias = Math.ceil((new Date(prazoDate).getTime() - Date.now()) / 86400000)
-          if (dias <= 15) status = 'vencendo'
-        }
-
-        const { error } = await supabase.from('editais').insert({
-          fonte_id: fonteFapesp?.id,
-          titulo: edital.titulo,
-          url_original: edital.url,
-          orgao: 'FAPESP',
-          publico_alvo: edital.publico ? [edital.publico] : [],
-          prazo_submissao: prazoDate,
-          descricao: edital.resumo || null,
-          status,
-          dados_brutos: edital,
-        })
-
-        if (!error) resultados.novos++
-        else resultados.erros++
-      }
-    }
-
-    await supabase
-      .from('fontes')
-      .update({ ultima_coleta: new Date().toISOString(), total_coletados: editaisFapesp.length })
-      .eq('nome', 'FAPESP')
 
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
