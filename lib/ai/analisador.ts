@@ -33,7 +33,18 @@ REGRAS CRÍTICAS:
    - "avaliar": score 40-69 ou há dúvidas sobre elegibilidade
    - "ignorar": score < 40 ou há impeditivo claro (ex: edital só para ICTs, só para indústria, só para Norte/Nordeste)
 5. "resumo_executivo" em português brasileiro direto — como você explicaria para um CEO em 30 segundos.
-6. Retorne APENAS JSON válido. Sem markdown, sem texto antes ou depois.`
+6. Retorne APENAS JSON válido. Sem markdown, sem texto antes ou depois.
+
+FILTRO DE RELEVÂNCIA:
+Retorne "relevante": false quando o edital claramente não serve para NENHUMA das duas empresas:
+- Exclusivo para ICTs, universidades ou fundações (sem empresas privadas elegíveis)
+- Processo seletivo de RH ou bolsa de pesquisa individual
+- Setor completamente distante de TI (agronegócio, cultura, turismo, construção civil, moda)
+- Restrição geográfica que exclui Brasília-DF sem filiais das empresas
+- Score NexIA < 20 E Score NCT < 20 simultaneamente
+Em todos os outros casos, retorne "relevante": true.
+Quando relevante=false, preencha motivo_irrelevancia com uma frase direta.
+Ainda assim preencha todos os outros campos normalmente.`
 
 const USER_TEMPLATE = (texto: string) => `Analise o seguinte edital e retorne o JSON de análise completa:
 
@@ -81,7 +92,9 @@ Retorne exatamente este JSON (sem nenhum texto adicional):
   "documentos_exigidos": [
     "documento tipicamente exigido 1",
     "documento tipicamente exigido 2"
-  ]
+  ],
+  "relevante": true_ou_false,
+  "motivo_irrelevancia": "null ou explicação em 1 frase se relevante=false"
 }`
 
 export async function analisarEdital(texto: string): Promise<AnaliseCompleta> {

@@ -15,6 +15,7 @@ export async function GET(request: NextRequest) {
   let query = supabase
     .from('editais')
     .select('*, fontes(nome)', { count: 'exact' })
+    .or('score_aderencia.gte.30,score_aderencia.is.null')
     .order('coletado_em', { ascending: false })
     .range((page - 1) * limit, page * limit - 1)
 

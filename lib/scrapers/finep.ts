@@ -1,6 +1,7 @@
 import { descobrirPDFs } from '@/lib/pdf/discovery'
 import { baixarPDFComRetry, extrairTextoPDF } from '@/lib/pdf/extractor'
 import { analisarEdital, analisarEditalPDFNativo } from '@/lib/ai/analisador'
+import { filtrarEditalRapido, filtrarPorPublico } from '@/lib/scrapers/filtros'
 import type { AnaliseCompleta } from '@/types'
 
 export interface EditalColetado {
@@ -150,11 +151,28 @@ export async function coletarFinepCompleto(): Promise<EditalColetado[]> {
   const listagem = await coletarListagem()
   console.log(`[FINEP] ${listagem.length} editais na listagem`)
 
+  // Apply quick filters before downloading PDFs
+  const editaisFiltrados = listagem.filter(item => {
+    const filtroPub = filtrarPorPublico(item.publico)
+    if (!filtroPub.relevante) {
+      console.log(`[FINEP] Descartado publico — ${item.titulo}: ${filtroPub.motivo}`)
+      return false
+    }
+    const filtroTitulo = filtrarEditalRapido(item.titulo, item.publico, item.tema)
+    if (!filtroTitulo.relevante) {
+      console.log(`[FINEP] Descartado titulo — ${item.titulo}: ${filtroTitulo.motivo}`)
+      return false
+    }
+    return true
+  })
+
+  console.log(`[FINEP] ${editaisFiltrados.length}/${listagem.length} passaram pelo filtro rapido`)
+
   const resultados: EditalColetado[] = []
   const TAMANHO_LOTE = 2
 
-  for (let i = 0; i < listagem.length; i += TAMANHO_LOTE) {
-    const lote = listagem.slice(i, i + TAMANHO_LOTE)
+  for (let i = 0; i < editaisFiltrados.length; i += TAMANHO_LOTE) {
+    const lote = editaisFiltrados.slice(i, i + TAMANHO_LOTE)
 
     const loteResultados = await Promise.allSettled(
       lote.map(item => processarEdital(item))

@@ -75,6 +75,7 @@ export default function FontesPage() {
     nativo:  { label: 'PDF escaneado', color: 'bg-[#e6f1fb] text-[#185fa5]' },
     sem_pdf: { label: 'Sem PDF',       color: 'bg-[#faeeda] text-[#854f0b]' },
     erro:    { label: 'Erro',          color: 'bg-[#fcebeb] text-[#a32d2d]' },
+    descartado: { label: 'Irrelevante', color: 'bg-[#f3f4f6] text-[#9ca3af]' },
   }
 
   return (

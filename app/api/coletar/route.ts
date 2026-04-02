@@ -39,6 +39,13 @@ export async function POST(request: NextRequest) {
         .single()
 
       for (const edital of editais) {
+        // Filter out irrelevant editals identified by AI
+        if (edital.analise && edital.analise.relevante === false) {
+          console.log(`[COLETAR] Descartado pela IA: ${edital.titulo} — ${edital.analise.motivo_irrelevancia}`)
+          resultados.detalhes.push({ titulo: edital.titulo, status: 'descartado', metodo: edital.metodo_extracao })
+          continue
+        }
+
         const { data: existente } = await supabase
           .from('editais')
           .select('id, analisado_em')

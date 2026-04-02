@@ -95,6 +95,8 @@ export interface AnaliseCompleta {
   nct: AnaliseEmpresa
   proximos_passos: string[]
   documentos_exigidos: string[]
+  relevante: boolean
+  motivo_irrelevancia: string | null
   edital_id?: string
 }
 
